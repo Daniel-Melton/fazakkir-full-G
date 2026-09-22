@@ -1,0 +1,130 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+/* Custom Icon Box Floating & Dual-Gradient Styles from HTML */
+.icon-duo i {
+  background: linear-gradient(135deg, #10b981 0%, #064e3b 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 2px 5px rgba(5, 150, 105, 0.3));
+  display: inline-block;
+  transition: transform 0.3s ease;
+}
+
+.icon-badge-box {
+  width: 62px;
+  height: 62px;
+  border-radius: 18px;
+  background: linear-gradient(145deg, #ffffff 0%, #ecfdf5 100%);
+  border: 1.5px solid #a7f3d0;
+  box-shadow: 0 10px 25px -5px rgba(5, 150, 105, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+  margin-bottom: 20px;
+  position: relative;
+  animation: iconFloat 4s ease-in-out infinite;
+}
+
+@keyframes iconFloat {
+  0%, 100% {
+    transform: translateY(0) scale(1);
+    box-shadow: 0 8px 20px -4px rgba(5, 150, 105, 0.15);
+  }
+  50% {
+    transform: translateY(-5px) scale(1.04);
+    box-shadow: 0 16px 28px -6px rgba(16, 185, 129, 0.28);
+  }
+}
+
+.course-card:hover .icon-badge-box i,
+.step-card:hover .icon-badge-box i {
+  transform: scale(1.15) rotate(6deg);
+}
+/* replaced-sections-styles */
+/* 3D Flip Card Styles */
+.perspective-1000 {
+  perspective: 1000px;
+}
+.transform-style-3d {
+  transform-style: preserve-3d;
+}
+.backface-hidden {
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+.rotate-y-180 {
+  transform: rotateY(180deg);
+}
+
+/* Card Heading Subtle Slide & Color Animation on Hover */
+.guarantee-card:hover .guarantee-title {
+  color: #065f46;
+  transform: translateX(4px);
+}
+
+.guarantee-title {
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), color 0.25s ease;
+}
+
+/* Course Card Icon Border Dark Green Hover */
+.course-card .icon-badge-box {
+  transition: all 0.35s ease;
+}
+
+.course-card:hover .icon-badge-box {
+  border-color: #047857 !important;
+  box-shadow: 0 10px 25px -4px rgba(4, 120, 87, 0.28);
+}
+
+@keyframes floatSlow {
+  0%, 100% {
+    transform: translateY(0px) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-12px) rotate(3deg);
+  }
+}
+
+@keyframes floatReverse {
+  0%, 100% {
+    transform: translateY(0px) rotate(0deg);
+  }
+  50% {
+    transform: translateY(12px) rotate(-3deg);
+  }
+}
+
+.animate-float-slow {
+  animation: floatSlow 6s ease-in-out infinite;
+}
+
+.animate-float-reverse {
+  animation: floatReverse 7s ease-in-out infinite;
+}
