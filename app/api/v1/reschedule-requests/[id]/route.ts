@@ -4,6 +4,7 @@ import { z } from "zod";
 import { apiSuccess, apiError } from "@/lib/api-response";
 import { verifyUserRole } from "@/lib/auth/rbac";
 import { resolveMeetingUrl } from "@/lib/scheduling/policy";
+import { dispatchNotification } from "@/lib/notifications/dispatcher";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -43,10 +44,16 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
 
     const { status: decision, supervisor_notes, new_scheduled_at_utc } = parsed.data;
 
-    // 1. جلب تفاصيل طلب إعادة الجدولة والحصة المرتبطة به
+    // 1. جلب تفاصيل الطلب والحساب
     const { data: requestRecord, error: requestError } = await supabase
       .from("schedule_change_requests")
-      .select("id, session_id, requested_by, status")
+      .select(`
+        id,
+        session_id,
+        requested_by,
+        status,
+        profiles:requested_by (email, full_name)
+      `)
       .eq("id", requestId)
       .single();
 
@@ -58,7 +65,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       return apiError(`Request is already resolved (${requestRecord.status})`, 400);
     }
 
-    // 2. معالجة حالة القبول (Approved)
+    // 2. معالجة حالة القبول أو الرفض
     if (decision === "approved") {
       if (!new_scheduled_at_utc) {
         return apiError("new_scheduled_at_utc is required when approving a reschedule request", 400);
@@ -72,7 +79,6 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
 
       const meetingUrl = session ? await resolveMeetingUrl(session.tutor_id) : null;
 
-      // تحديث الحصة بالموعد الجديد وإعادتها لحالة scheduled
       const { error: sessionUpdateError } = await supabase
         .from("class_sessions")
         .update({
@@ -86,7 +92,6 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
         return apiError("Failed to update session schedule", 500, sessionUpdateError.message);
       }
     } else {
-      // في حالة الرفض، إعادة الحصة لحالتها الأصلية scheduled
       await supabase
         .from("class_sessions")
         .update({ status: "scheduled" })
@@ -109,16 +114,25 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       return apiError("Failed to update request record", 500, updateError.message);
     }
 
-    // 4. إرسال إشعار لصاحب الطلب بالقرار
-    await supabase.from("notifications").insert([
-      {
-        user_id: requestRecord.requested_by,
-        type: "reschedule_decision",
-        title: decision === "approved" ? "تم قبول طلب تعديل الموعد" : "تم رفض طلب تعديل الموعد",
-        body: supervisor_notes || (decision === "approved" ? "تم تحديث موعد الحصة بنجاح." : "تعذر تعديل الموعد الحالي."),
-        link: `/dashboard/sessions/${requestRecord.session_id}`,
-      },
-    ]);
+    // 4. إرسال التنبيه المزدوج لصاحب الطلب
+    type ProfileRelation = { email: string; full_name: string } | null;
+    const requesterProfile = requestRecord.profiles as unknown as ProfileRelation;
+
+    const notifTitle = decision === "approved" ? "تم قبول طلب تعديل موعد الحصة" : "تعذر قبول طلب تعديل موعد الحصة";
+    const notifBody = supervisor_notes
+      ? `قرار المشرف: ${supervisor_notes}`
+      : decision === "approved"
+      ? "تم تحديث موعد الحصة بالموعد الجديد بنجاح في جدولك."
+      : "تم الإبقاء على موعد الحصة الأصلي دون تغيير.";
+
+    await dispatchNotification({
+      userId: requestRecord.requested_by,
+      userEmail: requesterProfile?.email,
+      type: "reschedule_decision",
+      title: notifTitle,
+      body: notifBody,
+      link: `/dashboard/sessions`,
+    });
 
     return apiSuccess({ request: updatedRequest });
   } catch (err: unknown) {
