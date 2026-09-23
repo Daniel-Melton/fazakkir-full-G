@@ -9,10 +9,15 @@ const supabase = createClient(
 const resendApiKey = process.env.RESEND_API_KEY;
 const resend = resendApiKey && !resendApiKey.includes("dummy") ? new Resend(resendApiKey) : null;
 
-interface NotificationPayload {
+export interface NotificationPayload {
   userId: string;
-  userEmail?: string | null;
-  type: "session_reminder" | "reschedule_request" | "reschedule_decision" | "session_report";
+  userEmail?: string;
+  type:
+    | "session_reminder"
+    | "reschedule_request"
+    | "reschedule_decision"
+    | "session_report"
+    | "new_trial_booked";
   title: string;
   body: string;
   link?: string;
