@@ -1,17 +1,18 @@
 import { NextRequest } from "next/server";
-import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
+import { createClient as createServerClient } from "@/lib/supabase/server";
+import { createClient } from "@supabase/supabase-js";
 import { apiSuccess, apiError } from "@/lib/api-response";
-import { verifyUserRole } from "@/lib/auth/rbac";
 import { canRescheduleSession } from "@/lib/scheduling/policy";
 
-const supabase = createClient(
+// عميل الصلاحيات الإدارية لتنفيذ العمليات التي تتجاوز قيود الـ RLS
+const adminSupabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
 const rescheduleRequestSchema = z.object({
-  reason: z.string().min(5, "Reason must be at least 5 characters long"),
+  reason: z.string().min(5, "يجب ألا يقل السبب عن 5 أحرف"),
   proposed_time_utc: z.string().datetime().optional(),
 });
 
@@ -23,20 +24,42 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
   try {
     const { id: sessionId } = await params;
 
-    const authHeader = req.headers.get("authorization");
-    const { error, profile, status } = await verifyUserRole(authHeader, [
-      "super_admin",
-      "academic_supervisor",
-      "tutor",
-      "parent_student",
-    ]);
+    // 1. استخراج والتحقق من جلسة المستخدم من الكوكيز أو الترويسة
+    const supabase = await createServerClient();
+    const {
+      data: { user },
+      error: authErr,
+    } = await supabase.auth.getUser();
 
-    if (error || !profile) {
-      return apiError(error || "Unauthorized", status);
+    let currentUserId = user?.id;
+
+    // فحص احتياطي عبر الترويسة في حال لم تكن الكوكيز متزامنة
+    if (!currentUserId) {
+      const authHeader = req.headers.get("authorization");
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.replace("Bearer ", "").trim();
+        const { data: jwtUser } = await adminSupabase.auth.getUser(token);
+        currentUserId = jwtUser?.user?.id;
+      }
     }
 
-    // 1. جلب تفاصيل الحصة والطالب
-    const { data: session, error: sessionError } = await supabase
+    if (!currentUserId) {
+      return apiError("Missing or invalid authorization token", 401);
+    }
+
+    // جلب دور وبيانات بروفايل المستخدم
+    const { data: profile, error: profileErr } = await adminSupabase
+      .from("profiles")
+      .select("id, role, full_name")
+      .eq("id", currentUserId)
+      .single();
+
+    if (profileErr || !profile) {
+      return apiError("User profile not found", 401);
+    }
+
+    // 2. جلب تفاصيل الحصة والطالب
+    const { data: session, error: sessionError } = await adminSupabase
       .from("class_sessions")
       .select("id, tutor_id, student_id, scheduled_at_utc, status, students!inner(parent_id)")
       .eq("id", sessionId)
@@ -46,7 +69,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       return apiError("Session not found", 404);
     }
 
-    // 2. التحقق من صلاحية الوصول للحصة بالتحديد
+    // 3. التحقق من صلاحية الوصول للحصة
     if (profile.role === "tutor" && session.tutor_id !== profile.id) {
       return apiError("Forbidden: You are not assigned to this session", 403);
     }
@@ -58,30 +81,29 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       }
     }
 
-    // 3. التحقق من سياسة المهلة الزمنية (Notice Policy)
-    // الإدارة والمشرفون معفيون من شرط المهلة لحالات الطوارئ
+    // 4. التحقق من سياسة المهلة الزمنية (Notice Policy)
     const isExempt = ["super_admin", "academic_supervisor"].includes(profile.role);
     if (!isExempt) {
       const check = await canRescheduleSession(session.scheduled_at_utc);
       if (!check.allowed) {
         return apiError(
-          `Rescheduling is not allowed within ${check.minNoticeHours} hours of the session. Hours remaining: ${check.hoursUntilSession}`,
+          `لا يمكن إعادة الجدولة قبل الموعد بأقل من ${check.minNoticeHours} ساعات. الساعات المتبقية: ${check.hoursUntilSession}`,
           400,
           { minNoticeHours: check.minNoticeHours, hoursRemaining: check.hoursUntilSession }
         );
       }
     }
 
-    // 4. معالجة وتدقيق سبب الطلب
+    // 5. معالجة وتدقيق سبب الطلب
     const body = await req.json();
     const parsed = rescheduleRequestSchema.safeParse(body);
 
     if (!parsed.success) {
-      return apiError("Validation failed", 400, parsed.error.flatten().fieldErrors);
+      return apiError("بيانات الطلب غير صالحة", 400, parsed.error.flatten().fieldErrors);
     }
 
-    // 5. تسجيل الطلب في جدول schedule_change_requests
-    const { data: requestRecord, error: insertError } = await supabase
+    // 6. تسجيل الطلب في جدول schedule_change_requests
+    const { data: requestRecord, error: insertError } = await adminSupabase
       .from("schedule_change_requests")
       .insert([
         {
@@ -95,11 +117,12 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       .single();
 
     if (insertError) {
-      return apiError("Failed to submit reschedule request", 500, insertError.message);
+      console.error("Reschedule Request DB Error:", insertError);
+      return apiError("Failed to submit reschedule request: " + insertError.message, 500);
     }
 
-    // 6. تحديث حالة الحصة إلى rescheduled مؤقتاً أو انتظار الاعتماد
-    await supabase
+    // 7. تحديث حالة الحصة إلى rescheduled مؤقتاً
+    await adminSupabase
       .from("class_sessions")
       .update({ status: "rescheduled" })
       .eq("id", sessionId);
@@ -107,6 +130,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     return apiSuccess({ request: requestRecord }, 201);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Internal Server Error";
+    console.error("Reschedule Route Crash:", err);
     return apiError(message, 500);
   }
 }

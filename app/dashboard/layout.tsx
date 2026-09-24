@@ -2,61 +2,80 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { createClient } from "@supabase/supabase-js";
+import { usePathname } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 import { UserRole } from "@/types/database";
 import { NotificationBell } from "@/components/dashboard/notification-bell";
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
 
 export default function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const supabase = createClient();
   const [role, setRole] = useState<UserRole | null>(null);
   const [token, setToken] = useState<string>("");
   const [userName, setUserName] = useState<string>("");
   const [loading, setLoading] = useState(true);
 
   const pathname = usePathname();
-  const router = useRouter();
 
   useEffect(() => {
     async function loadUser() {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        if (!session) {
+          setLoading(false);
+          return;
+        }
+
+        setToken(session.access_token);
+
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("role, full_name")
+          .eq("id", session.user.id)
+          .single();
+
+        if (profile) {
+          setRole(profile.role as UserRole);
+          setUserName(profile.full_name || "المعلم");
+        }
+      } catch (err) {
+        console.error("Failed to load user profile in layout:", err);
+      } finally {
         setLoading(false);
-        return;
       }
-
-      setToken(session.access_token);
-
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("role, full_name")
-        .eq("id", session.user.id)
-        .single();
-
-      if (profile) {
-        setRole(profile.role as UserRole);
-        setUserName(profile.full_name || "مستخدم");
-      }
-      setLoading(false);
     }
 
     loadUser();
-  }, []);
+  }, [supabase]);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
-    router.push("/");
+    window.location.href = "/login";
   };
 
-  const isSupervisorOrAdmin = role === "super_admin" || role === "academic_supervisor";
+  const isSupervisorOrAdmin =
+    role === "super_admin" || role === "academic_supervisor";
+
+  const getRoleLabel = (r: UserRole | null) => {
+    switch (r) {
+      case "super_admin":
+        return "مدير النظام";
+      case "academic_supervisor":
+        return "مشرف أكاديمي";
+      case "tutor":
+        return "معلم";
+      case "parent_student":
+        return "ولي أمر / طالب";
+      default:
+        return "جاري التحميل...";
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col dir-rtl text-right">
@@ -83,6 +102,19 @@ export default function DashboardLayout({
               >
                 جدول الحصص
               </Link>
+
+              {role === "tutor" && (
+                <Link
+                  href="/dashboard/tutor/availability"
+                  className={`px-3 py-2 rounded-lg text-xs font-medium transition ${
+                    pathname === "/dashboard/tutor/availability"
+                      ? "bg-emerald-50 text-emerald-700"
+                      : "text-gray-600 hover:text-emerald-600 hover:bg-gray-50"
+                  }`}
+                >
+                  أوقات التفرغ
+                </Link>
+              )}
 
               {isSupervisorOrAdmin && (
                 <>
@@ -113,19 +145,15 @@ export default function DashboardLayout({
           </div>
 
           {/* الجانب الأيسر: الإشعارات والمستخدم */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-4">
             {token && <NotificationBell authToken={token} />}
 
-            <div className="hidden sm:flex flex-col text-left">
-              <span className="text-xs font-bold text-gray-800">{userName}</span>
-              <span className="text-[10px] text-gray-400">
-                {role === "super_admin"
-                  ? "مدير النظام"
-                  : role === "academic_supervisor"
-                  ? "مشرف أكاديمي"
-                  : role === "tutor"
-                  ? "معلم"
-                  : "ولي أمر / طالب"}
+            <div className="flex flex-col text-left">
+              <span className="text-xs font-bold text-gray-800">
+                {userName || "أحمد محمود"}
+              </span>
+              <span className="text-[10px] text-emerald-600 font-medium">
+                {getRoleLabel(role)}
               </span>
             </div>
 

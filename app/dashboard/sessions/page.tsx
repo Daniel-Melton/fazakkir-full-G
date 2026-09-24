@@ -1,16 +1,11 @@
 "use client";
 
 import React, { useEffect, useState, useCallback } from "react";
-import { createClient } from "@supabase/supabase-js";
+import { createClient } from "@/lib/supabase/client";
 import { UserRole } from "@/types/database";
 import { SessionCard } from "@/components/dashboard/session-card";
 import { ReportModal } from "@/components/dashboard/report-modal";
 import { RescheduleModal } from "@/components/dashboard/reschedule-modal";
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
 
 interface SessionItem {
   id: string;
@@ -18,11 +13,12 @@ interface SessionItem {
   duration_minutes: number;
   meeting_url: string | null;
   status: string;
-  students?: { id: string; student_name: string; level: string } | null;
-  profiles?: { full_name: string; email: string } | null;
+  students?: { id: string; student_name: string; level?: string } | null;
+  profiles?: { full_name: string; email?: string } | null;
 }
 
 export default function SessionsPage() {
+  const supabase = createClient();
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   const [role, setRole] = useState<UserRole>("parent_student");
   const [token, setToken] = useState<string>("");
@@ -39,8 +35,14 @@ export default function SessionsPage() {
         headers: { Authorization: `Bearer ${authToken}` },
       });
       const result = await res.json();
-      if (result.success && result.data?.sessions) {
-        setSessions(result.data.sessions);
+
+      // معالجة البيانات سواء كانت مصفوفة مباشرة أو داخل كائن sessions
+      if (result.success) {
+        if (Array.isArray(result.data)) {
+          setSessions(result.data);
+        } else if (Array.isArray(result.data?.sessions)) {
+          setSessions(result.data.sessions);
+        }
       }
     } catch (err) {
       console.error("Failed to load sessions:", err);

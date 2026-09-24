@@ -1,111 +1,71 @@
 import { NextRequest } from "next/server";
-import { createClient } from "@supabase/supabase-js";
-import { z } from "zod";
+import { createClient } from "@/lib/supabase/server";
 import { apiSuccess, apiError } from "@/lib/api-response";
-import { verifyUserRole } from "@/lib/auth/rbac";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
-
-const createSessionSchema = z.object({
-  enrollment_id: z.string().uuid(),
-  tutor_id: z.string().uuid(),
-  student_id: z.string().uuid(),
-  scheduled_at_utc: z.string().datetime(),
-  duration_minutes: z.union([z.literal(30), z.literal(45), z.literal(60)]),
-  meeting_url: z.string().url().optional().nullable(),
-});
-
-// GET /api/v1/sessions
 export async function GET(req: NextRequest) {
   try {
-    const authHeader = req.headers.get("authorization");
-    const { error, profile, status } = await verifyUserRole(authHeader, [
-      "super_admin",
-      "academic_supervisor",
-      "tutor",
-      "parent_student",
-    ]);
+    const supabase = await createClient();
+    const {
+      data: { user },
+      error: authErr,
+    } = await supabase.auth.getUser();
 
-    if (error || !profile) {
-      return apiError(error || "Unauthorized", status);
+    if (authErr || !user) {
+      return apiError("Unauthorized", 401);
     }
 
+    // جلب دور المستخدم المسجل
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", user.id)
+      .single();
+
+    const role = profile?.role;
+
+    // استعلام مبسط للحصص لضمان عدم حدوث تعارض في العلاقات
     let query = supabase.from("class_sessions").select(`
       id,
       scheduled_at_utc,
       duration_minutes,
       meeting_url,
       status,
-      created_at,
-      students (id, student_name, level),
-      profiles:tutor_id (full_name, email)
+      student_id,
+      tutor_id,
+      students (
+        id,
+        student_name
+      )
     `);
 
-    // تطبيق فلترة البيانات حسب الصلاحيات (RBAC)
-    if (profile.role === "tutor") {
-      query = query.eq("tutor_id", profile.id);
-    } else if (profile.role === "parent_student") {
-      // جلب معرفات أبناء ولي الأمر أولاً
-      const { data: kids } = await supabase
+    if (role === "tutor") {
+      query = query.eq("tutor_id", user.id);
+    } else if (role === "parent_student") {
+      const { data: students } = await supabase
         .from("students")
         .select("id")
-        .eq("parent_id", profile.id);
-      
-      const studentIds = kids?.map((k) => k.id) || [];
+        .eq("parent_id", user.id);
+
+      const studentIds = (students || []).map((s) => s.id);
       query = query.in("student_id", studentIds);
+    } else if (role !== "super_admin" && role !== "academic_supervisor") {
+      return apiError("Forbidden", 403);
     }
 
-    const { data: sessions, error: dbError } = await query.order("scheduled_at_utc", {
-      ascending: true,
-    });
+    const { data: sessions, error: dbErr } = await query.order(
+      "scheduled_at_utc",
+      { ascending: true }
+    );
 
-    if (dbError) {
-      return apiError("Failed to fetch sessions", 500, dbError.message);
+    if (dbErr) {
+      console.error("DB Query Error in /api/v1/sessions:", dbErr);
+      return apiError("Database error: " + dbErr.message, 500);
     }
 
-    return apiSuccess({ sessions });
+    return apiSuccess(sessions || []);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Internal Server Error";
-    return apiError(message, 500);
-  }
-}
-
-// POST /api/v1/sessions
-export async function POST(req: NextRequest) {
-  try {
-    const authHeader = req.headers.get("authorization");
-    const { error, profile, status } = await verifyUserRole(authHeader, [
-      "super_admin",
-      "academic_supervisor",
-    ]);
-
-    if (error || !profile) {
-      return apiError(error || "Unauthorized", status);
-    }
-
-    const body = await req.json();
-    const parsed = createSessionSchema.safeParse(body);
-
-    if (!parsed.success) {
-      return apiError("Validation failed", 400, parsed.error.flatten().fieldErrors);
-    }
-
-    const { data: newSession, error: insertError } = await supabase
-      .from("class_sessions")
-      .insert([parsed.data])
-      .select()
-      .single();
-
-    if (insertError) {
-      return apiError("Failed to schedule session", 500, insertError.message);
-    }
-
-    return apiSuccess({ session: newSession }, 201);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal Server Error";
+    console.error("Server Crash in /api/v1/sessions:", err);
     return apiError(message, 500);
   }
 }

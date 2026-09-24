@@ -1,12 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useCallback } from "react";
-import { createClient } from "@supabase/supabase-js";
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+import { createClient } from "@/lib/supabase/client";
 
 interface RescheduleItem {
   id: string;
@@ -26,6 +21,7 @@ interface RescheduleItem {
 }
 
 export default function SupervisorReschedulePage() {
+  const supabase = createClient();
   const [requests, setRequests] = useState<RescheduleItem[]>([]);
   const [token, setToken] = useState<string>("");
   const [loading, setLoading] = useState(true);
@@ -49,8 +45,14 @@ export default function SupervisorReschedulePage() {
         headers: { Authorization: `Bearer ${authToken}` },
       });
       const data = await res.json();
-      if (data.success && data.data?.requests) {
-        setRequests(data.data.requests);
+      
+      // معالجة البيانات سواء كانت مصفوفة مباشرة أو داخل كائن requests
+      if (data.success) {
+        if (Array.isArray(data.data)) {
+          setRequests(data.data);
+        } else if (Array.isArray(data.data?.requests)) {
+          setRequests(data.data.requests);
+        }
       }
     } catch (err) {
       console.error("Failed to load requests:", err);
@@ -70,7 +72,7 @@ export default function SupervisorReschedulePage() {
       }
     }
     init();
-  }, [fetchRequests, filter]);
+  }, [supabase, fetchRequests, filter]);
 
   const handleResolve = async (e: React.FormEvent) => {
     e.preventDefault();

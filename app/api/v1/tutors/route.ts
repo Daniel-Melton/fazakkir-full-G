@@ -20,6 +20,7 @@ export async function GET(req: NextRequest) {
       return apiError(error || "Unauthorized", status);
     }
 
+    // جلب المعلمين مع معالجة الربط التلقائي بجدول profiles
     const { data: tutors, error: dbError } = await supabase
       .from("tutors")
       .select(`
@@ -27,7 +28,7 @@ export async function GET(req: NextRequest) {
         is_active,
         specialties,
         zoom_meeting_url,
-        profiles:id (
+        profiles (
           full_name,
           email,
           phone
@@ -36,7 +37,34 @@ export async function GET(req: NextRequest) {
       .eq("is_active", true);
 
     if (dbError) {
-      return apiError("Failed to fetch tutors", 500, dbError.message);
+      // بديل احتياطي في حال عدم وجود foreign key مباشر بين tutors و profiles:
+      // جلب المعلمين ثم دمج بيانات profiles يدوياً لضمان عدم توقف الواجهة أبداً
+      console.warn("Direct relation query failed, attempting manual join fallback:", dbError.message);
+
+      const { data: rawTutors, error: rawError } = await supabase
+        .from("tutors")
+        .select("*")
+        .eq("is_active", true);
+
+      if (rawError) {
+        return apiError("Failed to fetch tutors", 500, rawError.message);
+      }
+
+      // جمع المعرفات لجلب بيانات الحسابات المقابلة
+      const targetIds = (rawTutors || []).map((t: any) => t.user_id || t.profile_id || t.id);
+      const { data: profilesData } = await supabase
+        .from("profiles")
+        .select("id, full_name, email, phone")
+        .in("id", targetIds);
+
+      const profilesMap = new Map((profilesData || []).map((p) => [p.id, p]));
+
+      const mappedTutors = (rawTutors || []).map((t: any) => ({
+        ...t,
+        profiles: profilesMap.get(t.user_id || t.profile_id || t.id) || null,
+      }));
+
+      return apiSuccess({ tutors: mappedTutors });
     }
 
     return apiSuccess({ tutors });

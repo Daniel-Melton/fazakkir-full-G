@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { createClient } from "@/lib/supabase/client";
 
 interface RescheduleModalProps {
   sessionId: string;
@@ -8,7 +9,7 @@ interface RescheduleModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: () => void;
-  authToken: string;
+  authToken?: string;
 }
 
 export function RescheduleModal({
@@ -41,11 +42,24 @@ export function RescheduleModal({
     setErrorMsg(null);
 
     try {
+      // جلب التوكن الحي مباشرة من الجلسة لضمان عدم إرسال قيمة فارغة
+      const supabase = createClient();
+      let activeToken = authToken;
+
+      if (!activeToken) {
+        const { data: { session } } = await supabase.auth.getSession();
+        activeToken = session?.access_token;
+      }
+
+      if (!activeToken) {
+        throw new Error("جلسة الدخول غير صالحة أو منتهية، يرجى إعادة تسجيل الدخول.");
+      }
+
       const res = await fetch(`/api/v1/sessions/${sessionId}/reschedule`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${authToken}`,
+          Authorization: `Bearer ${activeToken}`,
         },
         body: JSON.stringify({
           reason,

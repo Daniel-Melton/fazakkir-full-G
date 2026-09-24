@@ -1,5 +1,5 @@
 "use client";
-
+import { createClient } from "@/lib/supabase/client";
 import React, { useState, useEffect, useCallback } from "react";
 
 interface Tutor {
@@ -15,6 +15,7 @@ interface AvailableSlot {
 }
 
 export default function TrialBookingPage() {
+  const supabase = createClient();
   // بيانات المعلمين والمواعيد
   const [tutors, setTutors] = useState<Tutor[]>([]);
   const [selectedTutor, setSelectedTutor] = useState<string>("");

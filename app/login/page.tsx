@@ -1,21 +1,17 @@
 "use client";
 
 import React, { useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import { createClient } from "@supabase/supabase-js";
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+import { useSearchParams } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 
 export default function LoginPage() {
+  const supabase = createClient();
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const router = useRouter();
   const searchParams = useSearchParams();
   const redirectTarget = searchParams.get("redirect") || "/dashboard/sessions";
   const authError = searchParams.get("error");
@@ -43,12 +39,17 @@ export default function LoginPage() {
           .eq("id", data.user.id)
           .single();
 
+        let targetUrl = redirectTarget;
+
         if (profile?.role === "super_admin" || profile?.role === "academic_supervisor") {
-          router.push("/dashboard/supervisor/enrollments");
-        } else {
-          router.push(redirectTarget);
+          targetUrl = "/dashboard/supervisor/enrollments";
+        } else if (profile?.role === "parent_student") {
+          targetUrl = "/dashboard/parent";
+        } else if (profile?.role === "tutor") {
+          targetUrl = "/dashboard/sessions";
         }
-        router.refresh();
+
+        window.location.href = targetUrl;
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "فشل تسجيل الدخول";
@@ -57,7 +58,6 @@ export default function LoginPage() {
           ? "البريد الإلكتروني أو كلمة المرور غير صحيحة"
           : msg
       );
-    } finally {
       setLoading(false);
     }
   };

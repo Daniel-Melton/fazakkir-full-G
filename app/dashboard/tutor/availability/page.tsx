@@ -1,5 +1,5 @@
 "use client";
-
+import { createClient } from "@/lib/supabase/client";
 import React, { useState, useEffect } from "react";
 
 interface SlotItem {
@@ -20,6 +20,7 @@ const DAYS = [
 ];
 
 export default function TutorAvailabilityPage() {
+  const supabase = createClient();
   const [slots, setSlots] = useState<SlotItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
